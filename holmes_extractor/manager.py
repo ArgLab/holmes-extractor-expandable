@@ -48,6 +48,18 @@ nlp_lock = Lock()
 pipeline_components_lock = Lock()
 
 
+
+def dynamic_import(package_name, module):
+    """Support for dynamic insertion of Spacy language components
+    """
+    import importlib
+    constants = importlib.import_module('.' + module, package=package_name)
+    import sys
+    for k in dir(constants):
+        if k.startswith('_'): continue
+        setattr(sys.modules[package_name], k, getattr(constants, k))
+
+        
 def get_nlp(model_name: str) -> Language:
     with nlp_lock:
         if model_name not in model_names_to_nlps:
@@ -106,6 +118,21 @@ class Manager:
         processes should depend on the number of available cores. Defaults to *None*
     verbose -- a boolean value specifying whether multiprocessing messages should be outputted to
         the console. Defaults to *False*
+    extra_components -- a list of dictionaries specifying any Spacy language components
+        to be inserted into the Holmes extractor pipeline. The expected format is a list
+        of dictionaries. Each dictionary specifies the package, module, component, and language
+        for a single component. For example:
+        extra_components=[
+                          {'package': 'spacytextblob',
+                           'module': 'spacytextblob',
+                           'component': 'spacytextblob'
+                           'language': 'en'}]
+         would add the spacytextblob component from the spacytextblob package/
+         module to the holmes extracdtor pipeline. (Assuming that spacytextblob has been
+         installed.) Note that inserted components are not currently exploited by the search,
+         topic modeling or chatbot capabilities. However, any modifications such components
+         make to the parse tree (including Spacy Doc, Span or Token attributes) will be
+         available in parsed documents retrieved using get_document.
     """
 
     def __init__(
@@ -119,7 +146,8 @@ class Manager:
         perform_coreference_resolution: bool = True,
         use_reverse_dependency_matching: bool = True,
         number_of_workers: int = None,
-        verbose: bool = False
+        verbose: bool = False,
+        extra_components=[]
     ):
         self.verbose = verbose
         self.nlp = get_nlp(model)
@@ -128,6 +156,11 @@ class Manager:
                 self.nlp.add_pipe("coreferee")
             if not self.nlp.has_pipe("holmes"):
                 self.nlp.add_pipe("holmes")
+            for item in extra_components:
+                dynamic_import(item['package'],item['module'])
+                if not self.nlp.has_pipe(item['component']) \
+                   and self.nlp.lang==item['language']:
+                    self.nlp.add_pipe(item['component'])
         HolmesBroker.set_extensions()
         self.semantic_analyzer = get_semantic_analyzer(self.nlp)
         if not self.semantic_analyzer.model_supports_embeddings():

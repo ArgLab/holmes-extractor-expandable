@@ -10,6 +10,7 @@ import pickle
 import pkg_resources
 import spacy
 import coreferee
+import importlib
 from spacy import Language
 from spacy.compat import Literal
 from spacy.tokens import Doc, Token
@@ -37,6 +38,7 @@ from .word_matching.entity_embedding import EntityEmbeddingWordMatchingStrategy
 from .word_matching.general import WordMatchingStrategy
 from .word_matching.ontology import OntologyWordMatchingStrategy
 
+
 TIMEOUT_SECONDS = 180
 
 absolute_config_filename = pkg_resources.resource_filename(__name__, "config.cfg")
@@ -52,9 +54,7 @@ pipeline_components_lock = Lock()
 def dynamic_import(package_name, module):
     """Support for dynamic insertion of Spacy language components
     """
-    import importlib
     constants = importlib.import_module('.' + module, package=package_name)
-    import sys
     for k in dir(constants):
         if k.startswith('_'): continue
         setattr(sys.modules[package_name], k, getattr(constants, k))
@@ -156,11 +156,16 @@ class Manager:
                 self.nlp.add_pipe("coreferee")
             if not self.nlp.has_pipe("holmes"):
                 self.nlp.add_pipe("holmes")
-            for item in extra_components:
-                dynamic_import(item['package'],item['module'])
-                if not self.nlp.has_pipe(item['component']) \
-                   and self.nlp.lang==item['language']:
-                    self.nlp.add_pipe(item['component'])
+            for added_component in extra_components:
+                if self.nlp.lang not in added_component['language']:
+                    raise ArgumentError(format("The component {component} cannot be added to the Holmes Extractor pipeline because it does not does not support the language {language_of_parser}. Supported languages: {component_languagelist}.",
+                                               component=added_component['component'],
+                                               language_of_parser=self.nlp.lang,
+                                               component_languagelist= ', '.join(added_component['language'])))
+                             
+                dynamic_import(added_component['package'],added_component['module'])
+                if not self.nlp.has_pipe(added_component['component']):
+                    self.nlp.add_pipe(added_component['component'])
         HolmesBroker.set_extensions()
         self.semantic_analyzer = get_semantic_analyzer(self.nlp)
         if not self.semantic_analyzer.model_supports_embeddings():
